@@ -29,7 +29,7 @@ app.use(cors(corsOptions));
 app.use(helmet());
 
 // Configure winston for logging
-const logDir = path.join(__dirname, 'logs'); // Directory where log files will be stored
+const logDir = process.env.LOG_DIR ? path.resolve(process.env.LOG_DIR) : path.join(__dirname, 'logs'); // Use .env value or default to './logs'
 if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir); // Create log directory if it doesn't exist
 }
@@ -58,19 +58,8 @@ const logger = winston.createLogger({
     ]
 });
 
-// Global error handlers
-process.on('uncaughtException', (err) => {
-    logger.error('Uncaught Exception:', err);
-    gracefulShutdown();
-});
-
-process.on('unhandledRejection', (err) => {
-    logger.error('Unhandled Rejection:', err);
-    gracefulShutdown();
-});
-
 // Directory where MBTiles files are stored
-const mbtilesDir = path.join(__dirname, 'tiles');
+const mbtilesDir = process.env.MBTILES_DIR ? path.resolve(process.env.MBTILES_DIR) : path.join(__dirname, 'tiles'); // Use .env value or default to './tiles'
 let tileServers = {};
 
 // Dynamically load all MBTiles files in the directory
@@ -89,7 +78,7 @@ fs.readdir(mbtilesDir, (err, files) => {
                     return;
                 }
                 tileServers[file] = mbtiles;
-                logger.info(`MBTiles file ${file} loaded successfully`); // You can remove this if you want to suppress info logs
+                logger.info(`MBTiles file ${file} loaded successfully`);
             });
         }
     });
@@ -98,7 +87,7 @@ fs.readdir(mbtilesDir, (err, files) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
     if (Object.keys(tileServers).length > 0) {
-        logger.info('Health check passed'); // You can remove this if you want to suppress info logs
+        logger.info('Health check passed');
         res.status(200).send('OK');
     } else {
         logger.warn('Health check failed: Tile server not initialized');
@@ -116,12 +105,12 @@ app.get('/tiles/:file/:z/:x/:y.mvt', (req, res) => {
         return res.status(404).send('Tile file not found');
     }
 
-    logger.info(`Serving tile from ${file} at z:${z}, x:${x}, y:${y}`); // You can remove this if you want to suppress info logs
+    logger.info(`Serving tile from ${file} at z:${z}, x:${x}, y:${y}`);
 
     tileServer.getTile(z, x, y, (err, tile, headers) => {
         if (err) {
             if (err.message.includes('Tile does not exist')) {
-                logger.info(`Tile does not exist: ${file} at z:${z}, x:${x}, y:${y}`); // You can remove this if you want to suppress info logs
+                logger.info(`Tile does not exist: ${file} at z:${z}, x:${x}, y:${y}`);
                 res.status(204).end();
             } else {
                 logger.error('Error serving tile:', err);
@@ -158,7 +147,7 @@ app.get('/metadata/:file', (req, res) => {
         return res.status(404).send('Tile file not found');
     }
 
-    logger.info(`Serving metadata for ${file}`); // You can remove this if you want to suppress info logs
+    logger.info(`Serving metadata for ${file}`);
 
     tileServer.getInfo((err, info) => {
         if (err) {
@@ -178,12 +167,12 @@ app.use((err, req, res, next) => {
 
 // Graceful shutdown handling
 const gracefulShutdown = () => {
-    logger.info('Received shutdown signal. Closing server...'); // You can remove this if you want to suppress info logs
+    logger.info('Received shutdown signal. Closing server...');
     server.close(() => {
-        logger.info('HTTP server closed'); // You can remove this if you want to suppress info logs
+        logger.info('HTTP server closed');
         Object.values(tileServers).forEach((tileServer) => {
             tileServer.close(() => {
-                logger.info('Closed tile server connection'); // You can remove this if you want to suppress info logs
+                logger.info('Closed tile server connection');
             });
         });
         process.exit(0);
@@ -202,5 +191,5 @@ process.on('SIGINT', gracefulShutdown);
 
 // Start the server
 const server = app.listen(port, () => {
-    logger.info(`Tile server running at http://localhost:${port}`); // You can remove this if you want to suppress info logs
+    logger.info(`Tile server running at http://localhost:${port}`);
 });

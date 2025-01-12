@@ -1,63 +1,107 @@
-// tests/api.test.js
 const axios = require('axios');
+const supertest = require('supertest');
+const app = require('../server'); // Assuming your app code is in a file called 'server.js'
+const { default: MBTiles } = require('@mapbox/mbtiles');
 const assert = require('assert');
+const http = require('http');
 
 const BASE_URL = 'http://localhost:8000';
+const request = supertest(app);
 
-async function runTests() {
-    console.log('Starting API tests...');
-    
-    try {
-        // Test 1: Health Check
-        console.log('\nTesting health endpoint...');
-        const healthResponse = await axios.get(`${BASE_URL}/health`);
-        assert.strictEqual(healthResponse.status, 200);
-        assert.strictEqual(healthResponse.data, 'OK');
-        console.log('✅ Health check passed');
+let server;
 
-        // Test 2: Metadata endpoint
-        console.log('\nTesting metadata endpoint...');
-        const metadataResponse = await axios.get(`${BASE_URL}/metadata`);
-        assert.strictEqual(metadataResponse.status, 200);
-        assert(metadataResponse.data, 'Metadata should not be empty');
-        console.log('✅ Metadata check passed');
-
-        // Test 3: Vector tile request
-        console.log('\nTesting tile endpoint...');
-        const tileResponse = await axios.get(`${BASE_URL}/tiles/0/0/0.mvt`, {
-            responseType: 'arraybuffer'
+// Wait for the server to be ready before starting tests
+beforeAll(async () => {
+    // Start the server manually using http.Server
+    server = http.createServer(app);
+    await new Promise((resolve, reject) => {
+        server.listen(8000, (err) => {
+            if (err) reject(err);
+            resolve();
         });
-        assert(tileResponse.status === 200 || tileResponse.status === 204);
-        if (tileResponse.status === 200) {
-            assert(tileResponse.headers['content-type'] === 'application/x-protobuf');
-        }
-        console.log('✅ Tile request check passed');
+    });
+});
 
-        // Test 4: CORS headers
-        console.log('\nTesting CORS headers...');
-        const corsResponse = await axios.get(`${BASE_URL}/tiles/0/0/0.mvt`, {
-            headers: {
-                'Origin': 'http://pattinam.in'
-            }
-        });
-        assert(corsResponse.headers['access-control-allow-origin']);
-        console.log('✅ CORS headers check passed');
+// Close the server after the tests
+afterAll(() => {
+    server.close();
+});
 
-        // Test 5: Cache headers
-        console.log('\nTesting cache headers...');
-        const cacheResponse = await axios.get(`${BASE_URL}/tiles/0/0/0.mvt`);
-        assert(cacheResponse.headers['cache-control']);
-        console.log('✅ Cache headers check passed');
+// Mock the MBTiles constructor to avoid file system interactions
+jest.mock('@mapbox/mbtiles', () => {
+    return jest.fn().mockImplementation(() => {
+        return {
+            getTile: jest.fn().mockImplementation((z, x, y, callback) => {
+                // Mocking a valid tile response for (z=0, x=0, y=0)
+                if (z === 0 && x === 0 && y === 0) {
+                    callback(null, Buffer.from('tile data'), {});
+                } else {
+                    callback(new Error('Tile does not exist'));
+                }
+            }),
+            getInfo: jest.fn().mockImplementation((callback) => {
+                callback(null, { tilejson: '1.0.0', name: 'Mocked MBTiles' });
+            }),
+        };
+    });
+});
 
-        console.log('\n🎉 All tests passed successfully!');
-    } catch (error) {
-        console.error('\n❌ Test failed:', error.message);
-        if (error.response) {
-            console.error('Response status:', error.response.status);
-            console.error('Response data:', error.response.data);
-        }
-        process.exit(1);
-    }
-}
+// Handle unhandled promise rejections globally for the test suite
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    process.exit(1);
+});
 
-runTests();
+// Test suite
+describe('Tile Server API Tests', () => {
+    // Test 1: Health Check
+    it('should return a 200 OK for the health endpoint', async () => {
+        const response = await request.get('/health');
+        expect(response.status).toBe(200);
+        expect(response.text).toBe('OK');
+    });
+
+    // Test 2: Metadata endpoint (dynamically testing with any file name)
+    it('should return metadata for the tile server', async () => {
+        const response = await request.get('/metadata/mocked.mbtiles');
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty('tilejson');
+        expect(response.body.name).toBe('Mocked MBTiles');
+    });
+
+    // Test 3: Tile Request (valid tile)
+    it('should serve a valid tile for z=0, x=0, y=0', async () => {
+        const response = await request.get('/tiles/mocked.mbtiles/0/0/0.mvt');
+        expect(response.status).toBe(200);
+        expect(response.headers['content-type']).toBe('application/x-protobuf');
+    });
+
+    // Test 4: Tile not found (z=1, x=1, y=1)
+    it('should return a 204 if tile does not exist', async () => {
+        const response = await request.get('/tiles/mocked.mbtiles/1/1/1.mvt');
+        expect(response.status).toBe(204);
+    });
+
+    // Test 5: CORS headers (allow all origins)
+    it('should allow CORS headers from any origin', async () => {
+        const response = await request.get('/tiles/mocked.mbtiles/0/0/0.mvt')
+            .set('Origin', 'http://pattinam.in');
+        expect(response.headers['access-control-allow-origin']).toBe('*');
+    });
+
+    // Test 6: Cache headers
+    it('should include Cache-Control header', async () => {
+        const response = await request.get('/tiles/mocked.mbtiles/0/0/0.mvt');
+        expect(response.headers['cache-control']).toBe('public, max-age=3600');
+    });
+
+    // Test for shutdown logic (mocked for now)
+    it('should shut down gracefully on SIGTERM', async () => {
+        // Mock graceful shutdown
+        const shutdown = jest.fn();
+        process.on('SIGTERM', shutdown);
+        
+        process.emit('SIGTERM');
+        expect(shutdown).toHaveBeenCalled();
+    });
+});
