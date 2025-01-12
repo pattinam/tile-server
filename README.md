@@ -35,7 +35,7 @@ npm install
 ```
 
 ### 3. Configure environment variables
-Create a .env file in the root of the project and configure the following variables:
+Create a `.env` file in the root of the project and configure the following variables:
 
 ```dotenv
 PORT=8000                # Port for the server
