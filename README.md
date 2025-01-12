@@ -22,7 +22,7 @@ Follow the steps below to set up the development environment and run the server.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/pattinam/tiles-server.git
+git clone https://github.com/pattinam/tile-server.git
 ```
 
 ### 2. Install dependencies
@@ -30,7 +30,7 @@ git clone https://github.com/pattinam/tiles-server.git
 Make sure you have Node.js installed, then run the following to install the project dependencies:
 
 ```bash
-cd tiles-server
+cd tile-server
 npm install
 ```
 
