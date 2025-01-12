@@ -1,52 +1,62 @@
-// server.js
+require('dotenv').config(); // Load environment variables
 const express = require('express');
 const MBTiles = require('@mapbox/mbtiles');
 const path = require('path');
 const cors = require('cors');
+const helmet = require('helmet');
+const winston = require('winston');
 
 const app = express();
-const port = 8000;
+const port = process.env.PORT || 8000; // Port from environment variables (.env file in root of the repo)
 
-// Set up CORS to allow front-end access
-const allowedOrigins = [
-    'http://144.126.254.165',
-    'http://144.126.254.165:80',
-    'http://pattinam.in:80',
-    'https://pattinam.in:443',
-    'http://pattinam.in',
-    'https://pattinam.in',
-    'http://172.28.238.244',
-    'http://localhost'
-];
+// Set up CORS
+const allowedOrigins = process.env.ALLOWED_ORIGINS.split(','); // origins from environment variables
 
 const corsOptions = {
-    origin: "*"
+    origin: '*',
+    methods: 'GET,HEAD,OPTIONS',
+    optionsSuccessStatus: 204
 };
 
 app.use(cors(corsOptions));
+app.use(helmet()); // Adding security headers
+
+// Configure winston for logging
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.timestamp(),
+        winston.format.simple()
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: 'server.log' })
+    ]
+});
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err);
-    // Optionally notify your error tracking service here
+    logger.error('Uncaught Exception:', err);
+    // Gracefully shut down if needed
 });
 
 process.on('unhandledRejection', (err) => {
-    console.error('Unhandled Rejection:', err);
-    // Optionally notify your error tracking service here
+    logger.error('Unhandled Rejection:', err);
+    // Gracefully shut down if needed
 });
 
 // Initialize MBTiles
-const mbtilesPath = path.join(__dirname, 'output.mbtiles');
+const mbtilesPath = path.join(__dirname, 'out.mbtiles');
 let tileServer;
 
 new MBTiles(`${mbtilesPath}?mode=ro`, (err, mbtiles) => {
     if (err) {
-        console.error('Error loading MBTiles:', err);
+        logger.error('Error loading MBTiles:', err);
         process.exit(1);
     }
     tileServer = mbtiles;
-    console.log('MBTiles loaded successfully');
+    logger.info('MBTiles loaded successfully');
 });
 
 // Health check endpoint
@@ -72,7 +82,7 @@ app.get('/tiles/:z/:x/:y.mvt', (req, res) => {
             if (err.message.includes('Tile does not exist')) {
                 res.status(204).end();
             } else {
-                console.error('Error serving tile:', err);
+                logger.error('Error serving tile:', err);
                 res.status(500).send('Error loading tile');
             }
             return;
@@ -105,7 +115,7 @@ app.get('/metadata', (req, res) => {
 
     tileServer.getInfo((err, info) => {
         if (err) {
-            console.error('Error loading metadata:', err);
+            logger.error('Error loading metadata:', err);
             res.status(500).send('Error loading metadata');
             return;
         }
@@ -113,24 +123,24 @@ app.get('/metadata', (req, res) => {
     });
 });
 
-// Error handling middleware
+// Error handling middleware for async errors
 app.use((err, req, res, next) => {
-    console.error('Server error:', err);
+    logger.error('Server error:', err);
     res.status(500).send('Internal Server Error');
 });
 
 const server = app.listen(port, () => {
-    console.log(`Tile server running at http://localhost:${port}`);
+    logger.info(`Tile server running at http://localhost:${port}`);
 });
 
 // Graceful shutdown handling
 const gracefulShutdown = () => {
-    console.log('Received shutdown signal. Closing server...');
+    logger.info('Received shutdown signal. Closing server...');
     server.close(() => {
-        console.log('HTTP server closed');
+        logger.info('HTTP server closed');
         if (tileServer) {
             tileServer.close(() => {
-                console.log('Closed tile server connection');
+                logger.info('Closed tile server connection');
                 process.exit(0);
             });
         } else {
@@ -140,7 +150,7 @@ const gracefulShutdown = () => {
 
     // Force close if graceful shutdown fails
     setTimeout(() => {
-        console.error('Could not close connections in time, forcefully shutting down');
+        logger.error('Could not close connections in time, forcefully shutting down');
         process.exit(1);
     }, 10000);
 };
