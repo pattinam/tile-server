@@ -1,6 +1,6 @@
 # Tile Server
 
-A Node.js application for serving tiles stored in MBTiles format. This project allows you to serve vector map tiles from MBTiles files in a REST API, with the ability to handle multiple files dynamically.
+A simple Node.js application for serving vector tiles in `.mvt ` format. This project allows you to serve vector map tiles from MBTiles files in a REST API, and can handle multiple files dynamically.
 
 ## Features
 - Serve vector tiles from MBTiles files.
@@ -59,7 +59,7 @@ The server will be running at http://localhost:8000 (or the port specified in yo
 ### 6. Accessing tiles
 You can access the tiles in the following endpoint following endpoint:
 
-```http
+```
 http://localhost:8000/tiles/:file/:z/:x/:y.mvt
 ```
 
@@ -70,9 +70,11 @@ Where:
 
 Example:
 
-```http
+```
 http://localhost:8000/tiles/myMap/12/300/150.mvt
 ```
+
+You can also add multiple `.mbtiles`   files inside your `tiles` directory. Just replace the `:file` parameter in the request URL and it'll serve the file.
 
 ### 7. Health check endpoint
 
