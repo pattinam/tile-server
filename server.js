@@ -1,85 +1,127 @@
-require('dotenv').config(); // Load environment variables
+require('dotenv').config();
 const express = require('express');
 const MBTiles = require('@mapbox/mbtiles');
 const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const winston = require('winston');
+const winstonDailyRotateFile = require('winston-daily-rotate-file'); // Import the log rotation transport
+const fs = require('fs');
 
 const app = express();
-const port = process.env.PORT || 8000; // Port from environment variables (.env file in root of the repo)
+const port = process.env.PORT || 8000;
 
 // Set up CORS
-const allowedOrigins = process.env.ALLOWED_ORIGINS.split(','); // origins from environment variables
-
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['*'];
 const corsOptions = {
-    origin: '*',
+    origin: (origin, callback) => {
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('CORS not allowed'), false);
+        }
+    },
     methods: 'GET,HEAD,OPTIONS',
     optionsSuccessStatus: 204
 };
 
 app.use(cors(corsOptions));
-app.use(helmet()); // Adding security headers
+app.use(helmet());
 
 // Configure winston for logging
+const logDir = path.join(__dirname, 'logs'); // Directory where log files will be stored
+if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir); // Create log directory if it doesn't exist
+}
+
 const logger = winston.createLogger({
-    level: 'info',
+    level: 'warn', // Only log warn, error, and critical logs
     format: winston.format.combine(
         winston.format.colorize(),
         winston.format.timestamp(),
         winston.format.simple()
     ),
     transports: [
+        // Console transport
         new winston.transports.Console(),
-        new winston.transports.File({ filename: 'server.log' })
+
+        // Daily rotate file transport
+        new winstonDailyRotateFile({
+            dirname: logDir,
+            filename: 'server-%DATE%.log',
+            datePattern: 'YYYY-MM-DD', // Rotate daily
+            maxSize: '20m', // Max size of log file before rotation
+            maxFiles: '14d', // Keep logs for 14 days
+            zippedArchive: true, // Compress older logs
+            level: 'warn' // Only log warn, error, and critical logs in file
+        })
     ]
 });
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
     logger.error('Uncaught Exception:', err);
-    // Gracefully shut down if needed
+    gracefulShutdown();
 });
 
 process.on('unhandledRejection', (err) => {
     logger.error('Unhandled Rejection:', err);
-    // Gracefully shut down if needed
+    gracefulShutdown();
 });
 
-// Initialize MBTiles
-const mbtilesPath = path.join(__dirname, 'out.mbtiles');
-let tileServer;
+// Directory where MBTiles files are stored
+const mbtilesDir = path.join(__dirname, 'tiles');
+let tileServers = {};
 
-new MBTiles(`${mbtilesPath}?mode=ro`, (err, mbtiles) => {
+// Dynamically load all MBTiles files in the directory
+fs.readdir(mbtilesDir, (err, files) => {
     if (err) {
-        logger.error('Error loading MBTiles:', err);
+        logger.error('Error reading MBTiles directory:', err);
         process.exit(1);
     }
-    tileServer = mbtiles;
-    logger.info('MBTiles loaded successfully');
+
+    files.forEach((file) => {
+        if (file.endsWith('.mbtiles')) {
+            const mbtilesPath = path.join(mbtilesDir, file);
+            new MBTiles(`${mbtilesPath}?mode=ro`, (err, mbtiles) => {
+                if (err) {
+                    logger.error(`Error loading MBTiles file ${file}:`, err);
+                    return;
+                }
+                tileServers[file] = mbtiles;
+                logger.info(`MBTiles file ${file} loaded successfully`); // You can remove this if you want to suppress info logs
+            });
+        }
+    });
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-    if (tileServer) {
+    if (Object.keys(tileServers).length > 0) {
+        logger.info('Health check passed'); // You can remove this if you want to suppress info logs
         res.status(200).send('OK');
     } else {
+        logger.warn('Health check failed: Tile server not initialized');
         res.status(503).send('Tile server not initialized');
     }
 });
 
-// Serve tiles
-app.get('/tiles/:z/:x/:y.mvt', (req, res) => {
-    const { z, x, y } = req.params;
-    
+// Serve tiles from the dynamically loaded MBTiles files
+app.get('/tiles/:file/:z/:x/:y.mvt', (req, res) => {
+    const { file, z, x, y } = req.params;
+
+    const tileServer = tileServers[`${file}.mbtiles`];
     if (!tileServer) {
-        res.status(503).send('Tile server not initialized');
-        return;
+        logger.warn(`Tile file ${file} not found for z:${z}, x:${x}, y:${y}`);
+        return res.status(404).send('Tile file not found');
     }
+
+    logger.info(`Serving tile from ${file} at z:${z}, x:${x}, y:${y}`); // You can remove this if you want to suppress info logs
 
     tileServer.getTile(z, x, y, (err, tile, headers) => {
         if (err) {
             if (err.message.includes('Tile does not exist')) {
+                logger.info(`Tile does not exist: ${file} at z:${z}, x:${x}, y:${y}`); // You can remove this if you want to suppress info logs
                 res.status(204).end();
             } else {
                 logger.error('Error serving tile:', err);
@@ -95,7 +137,7 @@ app.get('/tiles/:z/:x/:y.mvt', (req, res) => {
             'Cache-Control': 'public, max-age=3600',
             'X-Content-Type-Options': 'nosniff'
         });
-        
+
         if (headers) {
             for (const [key, value] of Object.entries(headers)) {
                 res.set(key, value);
@@ -106,12 +148,17 @@ app.get('/tiles/:z/:x/:y.mvt', (req, res) => {
     });
 });
 
-// Serve tile metadata
-app.get('/metadata', (req, res) => {
+// Serve tile metadata from the dynamically loaded MBTiles files
+app.get('/metadata/:file', (req, res) => {
+    const { file } = req.params;
+
+    const tileServer = tileServers[`${file}.mbtiles`];
     if (!tileServer) {
-        res.status(503).send('Tile server not initialized');
-        return;
+        logger.warn(`Tile file ${file} not found for metadata request`);
+        return res.status(404).send('Tile file not found');
     }
+
+    logger.info(`Serving metadata for ${file}`); // You can remove this if you want to suppress info logs
 
     tileServer.getInfo((err, info) => {
         if (err) {
@@ -129,23 +176,17 @@ app.use((err, req, res, next) => {
     res.status(500).send('Internal Server Error');
 });
 
-const server = app.listen(port, () => {
-    logger.info(`Tile server running at http://localhost:${port}`);
-});
-
 // Graceful shutdown handling
 const gracefulShutdown = () => {
-    logger.info('Received shutdown signal. Closing server...');
+    logger.info('Received shutdown signal. Closing server...'); // You can remove this if you want to suppress info logs
     server.close(() => {
-        logger.info('HTTP server closed');
-        if (tileServer) {
+        logger.info('HTTP server closed'); // You can remove this if you want to suppress info logs
+        Object.values(tileServers).forEach((tileServer) => {
             tileServer.close(() => {
-                logger.info('Closed tile server connection');
-                process.exit(0);
+                logger.info('Closed tile server connection'); // You can remove this if you want to suppress info logs
             });
-        } else {
-            process.exit(0);
-        }
+        });
+        process.exit(0);
     });
 
     // Force close if graceful shutdown fails
@@ -158,3 +199,8 @@ const gracefulShutdown = () => {
 // Attach shutdown handlers
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
+
+// Start the server
+const server = app.listen(port, () => {
+    logger.info(`Tile server running at http://localhost:${port}`); // You can remove this if you want to suppress info logs
+});
