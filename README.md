@@ -44,8 +44,10 @@ LOG_DIR=./logs            # Directory for logs
 MBTILES_DIR=./tiles       # Directory where your MBTiles files are stored
 ```
 
+Note: *If you dont want to customize anything then the defaults works as it is*
+
 ### 4. Add MBTiles files
-Store your MBTiles files in the tiles/ directory (or a directory specified in your .env file).
+Store your MBTiles files in the tiles/ directory (or a directory specified in your .env file). You can add as many MBTiles file as you want.
 
 ###  5. Start the server
 To run the server in development mode, use the following command:
@@ -62,11 +64,10 @@ You can access the tiles in the following endpoint following endpoint:
 ```
 http://localhost:8000/tiles/:file/:z/:x/:y.mvt
 ```
+where:
 
-Where:
-
-:file is the name of the MBTiles file (without the .mbtiles extension).
-:z, :x, :y are the zoom, tile X, and tile Y coordinates of the requested tile.
+`:file` is the name of the MBTiles file (without the .mbtiles extension).
+`:z, :x, :y` are the zoom, tile X, and tile Y coordinates of the requested tile.
 
 Example:
 

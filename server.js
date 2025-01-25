@@ -35,7 +35,7 @@ if (!fs.existsSync(logDir)) {
 }
 
 const logger = winston.createLogger({
-    level: 'warn', // Only log warn, error, and critical logs
+    level: 'warn', // show only warn, error or crtitical in command line
     format: winston.format.combine(
         winston.format.colorize(),
         winston.format.timestamp(),
@@ -53,7 +53,7 @@ const logger = winston.createLogger({
             maxSize: '20m', // Max size of log file before rotation
             maxFiles: '14d', // Keep logs for 14 days
             zippedArchive: true, // Compress older logs
-            level: 'warn' // Only log warn, error, and critical logs in file
+            level: 'info' // log everything in the log file
         })
     ]
 });
